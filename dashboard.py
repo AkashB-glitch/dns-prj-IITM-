@@ -431,24 +431,7 @@ def api_add():
     with db.get_connection() as conn:
         db.upsert_url(conn, url)
 
-        # ── Fast-path: URL host IS already a raw IP — no connection needed ──
-        host_is_ip, ip_str = _url_host_is_ip(url)
-        if host_is_ip:
-            existing = load_url_file()
-            if url not in existing:
-                save_url_to_file(url)
-            record = db.get_url_record(conn, url)
-            if record["current_status"] == "OK":
-                db.mark_detected(conn, url, url)  # final_url = url itself
-                record = db.get_url_record(conn, url)
-                sent = notifier.send_detection_alert(url, ip_str, record["first_detected_time"])
-                if sent:
-                    db.mark_notified(conn, url)
-                return jsonify(ok=True, message=f"RAW IP exposure flagged: {url} — WhatsApp alert sent!", is_ip=True)
-            else:
-                return jsonify(ok=True, message=f"{url} already tracked (status: {record['current_status']})", is_ip=True)
-
-        # ── Normal path: scan to check if redirect leads to a raw IP ──
+        # Scan the URL to check for redirects and final host
         result = scanner.check_url(url)
 
         # Auto-fallback: if https fails, try http (and vice versa)
@@ -490,22 +473,7 @@ def api_scan_one():
         record = db.get_url_record(conn, url)
         current = record["current_status"] if record else "OK"
 
-        # ── Fast-path FIRST: if URL host is a raw IP, no connection needed ──
-        host_is_ip, ip_str = _url_host_is_ip(url)
-        if host_is_ip:
-            if current == "OK":
-                db.mark_detected(conn, url, url)
-                rec = db.get_url_record(conn, url)
-                notifier.send_detection_alert(url, ip_str, rec["first_detected_time"])
-                db.mark_notified(conn, url)
-                return jsonify(message=f"RAW IP flagged: {url} — WhatsApp alert sent!", is_ip=True)
-            elif current in ("NOTIFIED", "RETESTED", "ESCALATED"):
-                db.mark_retested(conn, url, url)
-                return jsonify(message=f"{url} still a raw IP (status: {current} → RETESTED).", is_ip=True)
-            else:
-                return jsonify(message=f"{url} is a raw IP (status: {current}).", is_ip=True)
-
-        # ── Normal path: run network scan only for domain-based URLs ──
+        # Scan the URL to check for redirects and final host
         result = scanner.check_url(url)
         if result.success and result.is_raw_ip:
             if current == "OK":
