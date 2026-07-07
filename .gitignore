@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+dns_monitor.db
+dns_monitor.db-journal
+dns_monitor.log
+.venv/
