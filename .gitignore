@@ -7,3 +7,6 @@ dns_monitor.db
 dns_monitor.db-journal
 dns_monitor.log
 .venv/
+test_scanner.py
+test_scanner_cases.py
+check_db.py

@@ -4,12 +4,11 @@ scanner.py
 Core URL-checking logic.
 
 For each URL:
-1. Follow all HTTP redirects (using requests.Session with retry adapter).
-2. Capture the *final* URL (response.url).
-3. Parse the host from the final URL.
-4. Determine whether the host is a raw IP address or a proper domain.
-
-Returns a ScanResult dataclass with everything the scheduler needs.
+1. Follow all HTTP redirects (explicitly using allow_redirects=True)
+2. Capture the FINAL URL after all redirects (response.url)
+3. Extract the hostname from the final URL
+4. Determine whether the hostname is a valid IPv4/IPv6 address
+5. Log the full redirect chain (response.history) for debugging
 """
 
 import ipaddress
@@ -42,6 +41,7 @@ class ScanResult:
     ip_detected: str = ""       # set only when is_raw_ip is True
     error: Optional[str] = None
     success: bool = False       # True even when is_raw_ip; False only on network error
+    redirect_chain: list[str] = field(default_factory=list)  # list of intermediate URLs
 
 
 # ---------------------------------------------------------------------------
@@ -78,10 +78,16 @@ def _build_session() -> requests.Session:
 # ---------------------------------------------------------------------------
 def _is_ip_address(host: str) -> bool:
     """Return True if *host* is a valid IPv4 or IPv6 address."""
+    if not host:
+        return False
+    host_clean = host
     # Strip port if present (e.g. "192.168.1.1:8080" → "192.168.1.1")
-    host_clean = host.rsplit(":", 1)[0] if ":" in host else host
-    # IPv6 addresses may appear as [::1]; strip brackets
-    host_clean = host_clean.strip("[]")
+    if ":" in host:
+        # Check if it's an IPv6 address first (has [])
+        if "[" in host and "]" in host:
+            host_clean = host.strip("[]")
+        else:
+            host_clean = host.split(":")[0]
     try:
         ipaddress.ip_address(host_clean)
         return True
@@ -104,11 +110,16 @@ def check_url(url: str) -> ScanResult:
         response = session.get(
             url,
             timeout=REQUEST_TIMEOUT,
-            allow_redirects=True,
-            verify=False,  # IITM has valid certs but some subdomains may not; log, don't crash
+            allow_redirects=True,  # Explicitly set as per requirements
+            verify=False,          # IITM has valid certs but some subdomains may not
         )
+        # Log full redirect chain
+        result.redirect_chain = [r.url for r in response.history]
+        if result.redirect_chain:
+            logger.info("Redirect chain for %s: %s", url, " → ".join(result.redirect_chain))
+        
         result.final_url = response.url
-        parsed = urlparse(response.url)
+        parsed = urlparse(result.final_url)
         result.host = parsed.hostname or ""
 
         if _is_ip_address(result.host):
@@ -116,25 +127,14 @@ def check_url(url: str) -> ScanResult:
             result.ip_detected = result.host
             logger.warning("RAW IP DETECTED  %s  →  %s  (host=%s)", url, result.final_url, result.host)
         else:
-            logger.debug("OK  %s  →  %s  (host=%s)", url, result.final_url, result.host)
+            logger.info("OK  %s  →  %s  (host=%s)", url, result.final_url, result.host)
 
         result.success = True
 
-    except requests.exceptions.SSLError as exc:
-        # SSL errors often mean the domain resolves fine but cert is bad — treat as OK
-        result.error = f"SSLError: {exc}"
+    except requests.exceptions.RequestException as exc:  # Catch all request-related exceptions
+        result.error = f"RequestException: {exc}"
         result.success = False
-        logger.warning("SSL error for %s: %s", url, exc)
-
-    except requests.exceptions.ConnectionError as exc:
-        result.error = f"ConnectionError: {exc}"
-        result.success = False
-        logger.warning("Connection error for %s: %s", url, exc)
-
-    except requests.exceptions.Timeout:
-        result.error = "Timeout"
-        result.success = False
-        logger.warning("Timeout for %s", url)
+        logger.warning("Request error for %s: %s", url, exc)
 
     except Exception as exc:  # pylint: disable=broad-except
         result.error = f"Unexpected: {exc}"
