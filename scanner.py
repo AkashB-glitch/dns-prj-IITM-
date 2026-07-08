@@ -116,7 +116,7 @@ def check_url(url: str) -> ScanResult:
         # Log full redirect chain
         result.redirect_chain = [r.url for r in response.history]
         if result.redirect_chain:
-            logger.info("Redirect chain for %s: %s", url, " → ".join(result.redirect_chain))
+            logger.info("Redirect chain for %s: %s", url, " -> ".join(result.redirect_chain))
         
         result.final_url = response.url
         parsed = urlparse(result.final_url)
@@ -125,9 +125,9 @@ def check_url(url: str) -> ScanResult:
         if _is_ip_address(result.host):
             result.is_raw_ip = True
             result.ip_detected = result.host
-            logger.warning("RAW IP DETECTED  %s  →  %s  (host=%s)", url, result.final_url, result.host)
+            logger.warning("RAW IP DETECTED  %s  ->  %s  (host=%s)", url, result.final_url, result.host)
         else:
-            logger.info("OK  %s  →  %s  (host=%s)", url, result.final_url, result.host)
+            logger.info("OK  %s  ->  %s  (host=%s)", url, result.final_url, result.host)
 
         result.success = True
 
